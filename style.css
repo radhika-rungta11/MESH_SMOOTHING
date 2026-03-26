@@ -1,0 +1,96 @@
+html,
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: Arial, sans-serif;
+  background: #0f172a;
+  color: #ffffff;
+}
+
+#app {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+#viewer {
+  width: 100%;
+  height: 100%;
+}
+
+#ui-panel {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  width: 340px;
+  z-index: 10;
+  padding: 18px;
+  border-radius: 18px;
+}
+
+.glass {
+  background: rgba(15, 23, 42, 0.82);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+}
+
+h1 {
+  margin: 0 0 8px 0;
+  font-size: 22px;
+}
+
+.subtitle {
+  margin: 0 0 16px 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #cbd5e1;
+}
+
+.field {
+  display: block;
+  margin-bottom: 14px;
+}
+
+.field span {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 14px;
+  color: #e2e8f0;
+}
+
+input[type="file"],
+select,
+input[type="range"] {
+  width: 100%;
+}
+
+.button-row {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+button {
+  flex: 1;
+  padding: 10px 12px;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  background: #2563eb;
+  color: white;
+  font-weight: 600;
+}
+
+button:hover {
+  opacity: 0.92;
+}
+
+#status {
+  margin-top: 14px;
+  font-size: 13px;
+  color: #93c5fd;
+  white-space: pre-line;
+}

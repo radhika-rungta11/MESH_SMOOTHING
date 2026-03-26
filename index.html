@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mesh Smoothing Viewer</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div id="app">
+    <div id="ui-panel" class="glass">
+      <h1>Mesh Smoothing</h1>
+      <p class="subtitle">
+        Load any OBJ mesh and interactively control surface smoothing.
+      </p>
+
+      <label class="field">
+        <span>Load OBJ Mesh</span>
+        <input type="file" id="objFileInput" accept=".obj" />
+      </label>
+
+      <label class="field">
+        <span>Smoothing Method</span>
+        <select id="methodSelect">
+          <option value="Laplacian">Laplacian</option>
+          <option value="Taubin" >Taubin </option>
+          <option value="Feature-Preserving">Feature-preserving</option>
+        </select>
+      </label>
+
+      <label class="field">
+        <span>Smoothing Strength: <strong id="strengthValue">0.20</strong></span>
+        <input
+          type="range"
+          id="strengthSlider"
+          min="0.01"
+          max="1.00"
+          step="0.01"
+          value="0.20"
+        />
+      </label>
+
+      <label class="field">
+        <span>Iterations: <strong id="iterationValue">5</strong></span>
+        <input
+          type="range"
+          id="iterationSlider"
+          min="1"
+          max="30"
+          step="1"
+          value="5"
+        />
+      </label>
+      <label class="field">
+  <span>Feature Angle Threshold: <strong id="featureAngleValue">35</strong>°</span>
+  <input
+    type="range"
+    id="featureAngleSlider"
+    min="5"
+    max="80"
+    step="1"
+    value="35"
+  />
+</label>
+
+      <div class="button-row">
+        <button id="applyBtn">Apply Smoothing</button>
+        <button id="resetBtn">Reset Mesh</button>
+      </div>
+
+      <div id="status">Status: waiting for OBJ file</div>
+    </div>
+
+    <div id="viewer"></div>
+  </div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
