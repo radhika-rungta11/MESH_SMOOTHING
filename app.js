@@ -1,6 +1,8 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
+import { OBJExporter } from "three/addons/exporters/OBJExporter.js";
+import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
 
 const viewer = document.getElementById("viewer");
 const objFileInput = document.getElementById("objFileInput");
@@ -15,6 +17,8 @@ const featureAngleValue = document.getElementById("featureAngleValue");
 
 const applyBtn = document.getElementById("applyBtn");
 const resetBtn = document.getElementById("resetBtn");
+const exportObjBtn = document.getElementById("exportObjBtn");
+const exportGlbBtn = document.getElementById("exportGlbBtn");
 const statusEl = document.getElementById("status");
 
 strengthSlider.addEventListener("input", () => {
@@ -38,7 +42,7 @@ const camera = new THREE.PerspectiveCamera(
   0.01,
   1000
 );
-camera.position.set(0, 0.5, 2.5);
+camera.position.set(0, 0.5, 3);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(viewer.clientWidth, viewer.clientHeight);
@@ -55,12 +59,16 @@ const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
 dirLight.position.set(2, 3, 4);
 scene.add(dirLight);
 
-const grid = new THREE.GridHelper(4, 20, 0x334155, 0x1e293b);
-grid.position.y = -0.75;
+const grid = new THREE.GridHelper(8, 40, 0x334155, 0x1e293b);
+grid.position.y = -1.0;
 scene.add(grid);
 
-let currentMesh = null;
 let originalGeometry = null;
+let processedGeometry = null;
+let previewMesh = null;
+
+const previewGroup = new THREE.Group();
+scene.add(previewGroup);
 
 function setStatus(message) {
   statusEl.textContent = `Status: ${message}`;
@@ -77,40 +85,29 @@ window.addEventListener("resize", () => {
   camera.aspect = viewer.clientWidth / viewer.clientHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(viewer.clientWidth, viewer.clientHeight);
+
+  if (previewMesh) {
+    framePreviewMesh(previewMesh);
+  }
 });
 
-function centerAndFrameObject(object) {
-  const box = new THREE.Box3().setFromObject(object);
-  const size = box.getSize(new THREE.Vector3());
-  const center = box.getCenter(new THREE.Vector3());
+function disposeMesh(mesh) {
+  if (!mesh) return;
+  mesh.geometry?.dispose();
 
-  object.position.sub(center);
-
-  const maxDim = Math.max(size.x, size.y, size.z);
-  const distance = maxDim * 2.2 || 2;
-  camera.position.set(0, maxDim * 0.4, distance);
-  controls.target.set(0, 0, 0);
-  controls.update();
+  if (Array.isArray(mesh.material)) {
+    mesh.material.forEach((m) => m.dispose?.());
+  } else {
+    mesh.material?.dispose?.();
+  }
 }
 
-function disposeCurrentMesh() {
-  if (!currentMesh) return;
-
-  scene.remove(currentMesh);
-
-  currentMesh.traverse((child) => {
-    if (child.isMesh) {
-      child.geometry?.dispose();
-
-      if (Array.isArray(child.material)) {
-        child.material.forEach((m) => m.dispose?.());
-      } else {
-        child.material?.dispose?.();
-      }
-    }
-  });
-
-  currentMesh = null;
+function clearPreviewMeshes() {
+  if (previewMesh) {
+    previewGroup.remove(previewMesh);
+    disposeMesh(previewMesh);
+    previewMesh = null;
+  }
 }
 
 function convertToIndexedIfNeeded(geometry) {
@@ -258,7 +255,6 @@ function detectFeatureVertices(geometry, angleThresholdDeg = 35) {
     const attachedFaces = edgeData.faces;
 
     if (attachedFaces.length !== 2) {
-      // Boundary edge
       locked[v0] = true;
       locked[v1] = true;
       continue;
@@ -266,7 +262,6 @@ function detectFeatureVertices(geometry, angleThresholdDeg = 35) {
 
     const n0 = faceNormals[attachedFaces[0]];
     const n1 = faceNormals[attachedFaces[1]];
-
     const dot = n0[0] * n1[0] + n0[1] * n1[1] + n0[2] * n1[2];
 
     if (dot < cosThreshold) {
@@ -386,14 +381,66 @@ function featurePreservingSmooth(
   return indexedGeometry;
 }
 
-function createDisplayMesh(geometry) {
+function createDisplayMesh(geometry, color) {
   const material = new THREE.MeshStandardMaterial({
-    color: 0x60a5fa,
+    color,
     metalness: 0.1,
     roughness: 0.65,
   });
 
   return new THREE.Mesh(geometry, material);
+}
+
+function createPreviewGeometry(sourceGeometry) {
+  const previewGeometry = sourceGeometry.clone();
+  previewGeometry.computeBoundingBox();
+  previewGeometry.center();
+  previewGeometry.computeVertexNormals();
+  return previewGeometry;
+}
+
+function rebuildPreview() {
+  clearPreviewMeshes();
+
+  const geometryToShow = processedGeometry || originalGeometry;
+  if (!geometryToShow) return;
+
+  previewGroup.position.set(0, 0, 0);
+
+  const previewGeometry = createPreviewGeometry(geometryToShow);
+  previewMesh = createDisplayMesh(previewGeometry, 0x60a5fa);
+  previewMesh.name = "previewMesh";
+
+  previewGroup.add(previewMesh);
+
+  framePreviewMesh(previewMesh);
+}
+
+function framePreviewMesh(mesh) {
+  if (!mesh) return;
+
+  const box = new THREE.Box3().setFromObject(mesh);
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+
+  const maxDim = Math.max(size.x, size.y, size.z) || 1;
+  const fov = THREE.MathUtils.degToRad(camera.fov);
+
+  let distance = (maxDim * 0.5) / Math.tan(fov / 2);
+  distance *= 1.8;
+
+  controls.target.copy(center);
+
+  camera.position.set(
+    center.x,
+    center.y + maxDim * 0.25,
+    center.z + distance
+  );
+
+  camera.near = Math.max(0.001, maxDim / 100);
+  camera.far = Math.max(1000, maxDim * 20);
+  camera.updateProjectionMatrix();
+  controls.update();
 }
 
 async function loadOBJFromText(objText) {
@@ -412,14 +459,88 @@ async function loadOBJFromText(objText) {
     throw new Error("No mesh geometry found in the OBJ file.");
   }
 
-  disposeCurrentMesh();
-
   originalGeometry = convertToIndexedIfNeeded(firstMeshGeometry.clone());
-  currentMesh = createDisplayMesh(originalGeometry.clone());
-  scene.add(currentMesh);
-  centerAndFrameObject(currentMesh);
+  processedGeometry = originalGeometry.clone();
 
-  setStatus("OBJ loaded successfully. Ready for smoothing.");
+  rebuildPreview();
+  setStatus("OBJ loaded. Showing current mesh only.");
+}
+
+function downloadBlob(blob, fileName) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function exportProcessedOBJ() {
+  if (!processedGeometry) {
+    setStatus("Load and process a mesh first.");
+    return;
+  }
+
+  const tempMesh = new THREE.Mesh(
+    processedGeometry.clone(),
+    new THREE.MeshStandardMaterial({ color: 0xffffff })
+  );
+
+  tempMesh.position.set(0, 0, 0);
+  tempMesh.rotation.set(0, 0, 0);
+  tempMesh.scale.set(1, 1, 1);
+
+  const exporter = new OBJExporter();
+  const objText = exporter.parse(tempMesh);
+  const blob = new Blob([objText], { type: "text/plain" });
+
+  downloadBlob(blob, "smoothed_mesh.obj");
+
+  tempMesh.geometry.dispose();
+  tempMesh.material.dispose();
+
+  setStatus("Exported processed mesh as OBJ.");
+}
+
+function exportProcessedGLB() {
+  if (!processedGeometry) {
+    setStatus("Load and process a mesh first.");
+    return;
+  }
+
+  const tempScene = new THREE.Scene();
+  const tempMesh = new THREE.Mesh(
+    processedGeometry.clone(),
+    new THREE.MeshStandardMaterial({
+      color: 0x60a5fa,
+      metalness: 0.1,
+      roughness: 0.65,
+    })
+  );
+
+  tempScene.add(tempMesh);
+
+  const exporter = new GLTFExporter();
+
+  exporter.parse(
+    tempScene,
+    (result) => {
+      const blob = new Blob([result], { type: "model/gltf-binary" });
+      downloadBlob(blob, "smoothed_mesh.glb");
+
+      tempMesh.geometry.dispose();
+      tempMesh.material.dispose();
+
+      setStatus("Exported processed mesh as GLB.");
+    },
+    (error) => {
+      console.error(error);
+      setStatus(`GLB export failed.\n${error.message || error}`);
+    },
+    { binary: true }
+  );
 }
 
 objFileInput.addEventListener("change", async (event) => {
@@ -437,7 +558,7 @@ objFileInput.addEventListener("change", async (event) => {
 });
 
 applyBtn.addEventListener("click", () => {
-  if (!currentMesh || !originalGeometry) {
+  if (!originalGeometry) {
     setStatus("Please load an OBJ mesh first.");
     return;
   }
@@ -450,29 +571,26 @@ applyBtn.addEventListener("click", () => {
 
     setStatus(`Applying ${method} smoothing...`);
 
-    let newGeometry;
-
     if (method === "laplacian") {
-      newGeometry = laplacianSmooth(originalGeometry, strength, iterations);
+      processedGeometry = laplacianSmooth(originalGeometry, strength, iterations);
     } else if (method === "taubin") {
-      newGeometry = taubinSmooth(originalGeometry, strength, iterations);
+      processedGeometry = taubinSmooth(originalGeometry, strength, iterations);
     } else if (method === "feature") {
-      newGeometry = featurePreservingSmooth(
+      processedGeometry = featurePreservingSmooth(
         originalGeometry,
         strength,
         iterations,
         featureAngle
       );
     } else {
-      setStatus(`${method} is not enabled yet.`);
+      setStatus(`${method} is not enabled.`);
       return;
     }
 
-    currentMesh.geometry.dispose();
-    currentMesh.geometry = newGeometry;
+    rebuildPreview();
 
     setStatus(
-      `Smoothing complete.\nMethod: ${method}\nStrength: ${strength.toFixed(2)}\nIterations: ${iterations}\nFeature angle: ${featureAngle}°`
+      `Smoothing complete.\nShowing processed mesh only.\nMethod: ${method}\nStrength: ${strength.toFixed(2)}\nIterations: ${iterations}\nFeature angle: ${featureAngle}°`
     );
   } catch (error) {
     console.error(error);
@@ -481,14 +599,30 @@ applyBtn.addEventListener("click", () => {
 });
 
 resetBtn.addEventListener("click", () => {
-  if (!currentMesh || !originalGeometry) {
+  if (!originalGeometry) {
     setStatus("Nothing to reset yet.");
     return;
   }
 
-  currentMesh.geometry.dispose();
-  currentMesh.geometry = originalGeometry.clone();
-  currentMesh.geometry.computeVertexNormals();
+  processedGeometry = originalGeometry.clone();
+  rebuildPreview();
+  setStatus("Processed mesh reset to original.");
+});
 
-  setStatus("Mesh reset to original geometry.");
+exportObjBtn.addEventListener("click", () => {
+  try {
+    exportProcessedOBJ();
+  } catch (error) {
+    console.error(error);
+    setStatus(`OBJ export failed.\n${error.message}`);
+  }
+});
+
+exportGlbBtn.addEventListener("click", () => {
+  try {
+    exportProcessedGLB();
+  } catch (error) {
+    console.error(error);
+    setStatus(`GLB export failed.\n${error.message}`);
+  }
 });
