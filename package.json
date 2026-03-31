@@ -1,0 +1,26 @@
+{
+  "name": "mesh-smoothing-web",
+  "version": "1.0.0",
+  "description": "",
+  "main": "app.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/radhika-rungta11/MESH_SMOOTHING.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/radhika-rungta11/MESH_SMOOTHING/issues"
+  },
+  "homepage": "https://github.com/radhika-rungta11/MESH_SMOOTHING#readme",
+  "dependencies": {
+    "three": "^0.183.2",
+    "three-mesh-bvh": "^0.9.9",
+    "xatlas-three": "^0.2.1"
+  }
+}
