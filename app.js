@@ -71,7 +71,30 @@ const previewGroup = new THREE.Group();
 scene.add(previewGroup);
 
 function setStatus(message) {
-  statusEl.textContent = `Status: ${message}`;
+  statusEl.textContent = `Status: ${String(message).replace(/\n/g, " ")}`;
+}
+
+function normalizeMethod(value) {
+  const method = String(value || "").trim().toLowerCase();
+
+  if (method === "laplacian" || method === "laplace") {
+    return "laplacian";
+  }
+
+  if (method === "taubin") {
+    return "taubin";
+  }
+
+  if (
+    method === "feature" ||
+    method === "feature-preserving" ||
+    method === "feature preserving" ||
+    method === "feature_preserving"
+  ) {
+    return "feature";
+  }
+
+  return "";
 }
 
 function animate() {
@@ -412,7 +435,6 @@ function rebuildPreview() {
   previewMesh.name = "previewMesh";
 
   previewGroup.add(previewMesh);
-
   framePreviewMesh(previewMesh);
 }
 
@@ -537,7 +559,7 @@ function exportProcessedGLB() {
     },
     (error) => {
       console.error(error);
-      setStatus(`GLB export failed.\n${error.message || error}`);
+      setStatus(`GLB export failed. ${error.message || error}`);
     },
     { binary: true }
   );
@@ -553,7 +575,7 @@ objFileInput.addEventListener("change", async (event) => {
     await loadOBJFromText(text);
   } catch (error) {
     console.error(error);
-    setStatus(`Failed to load OBJ.\n${error.message}`);
+    setStatus(`Failed to load OBJ. ${error.message}`);
   }
 });
 
@@ -564,17 +586,31 @@ applyBtn.addEventListener("click", () => {
   }
 
   try {
-    const method = methodSelect.value;
+    const rawMethod = methodSelect?.value;
+    const method = normalizeMethod(rawMethod);
     const strength = Number(strengthSlider.value);
     const iterations = Number(iterationSlider.value);
     const featureAngle = Number(featureAngleSlider.value);
 
+    if (!method) {
+      setStatus(`Unknown smoothing method selected: ${rawMethod}`);
+      return;
+    }
+
     setStatus(`Applying ${method} smoothing...`);
 
     if (method === "laplacian") {
-      processedGeometry = laplacianSmooth(originalGeometry, strength, iterations);
+      processedGeometry = laplacianSmooth(
+        originalGeometry,
+        strength,
+        iterations
+      );
     } else if (method === "taubin") {
-      processedGeometry = taubinSmooth(originalGeometry, strength, iterations);
+      processedGeometry = taubinSmooth(
+        originalGeometry,
+        strength,
+        iterations
+      );
     } else if (method === "feature") {
       processedGeometry = featurePreservingSmooth(
         originalGeometry,
@@ -582,19 +618,18 @@ applyBtn.addEventListener("click", () => {
         iterations,
         featureAngle
       );
-    } else {
-      setStatus(`${method} is not enabled.`);
-      return;
     }
 
     rebuildPreview();
 
     setStatus(
-      `Smoothing complete.\nShowing processed mesh only.\nMethod: ${method}\nStrength: ${strength.toFixed(2)}\nIterations: ${iterations}\nFeature angle: ${featureAngle}°`
+      `Smoothing complete. Showing processed mesh only. Method: ${method}. Strength: ${strength.toFixed(
+        2
+      )}. Iterations: ${iterations}. Feature angle: ${featureAngle}°`
     );
   } catch (error) {
     console.error(error);
-    setStatus(`Smoothing failed.\n${error.message}`);
+    setStatus(`Smoothing failed. ${error.message}`);
   }
 });
 
@@ -614,7 +649,7 @@ exportObjBtn.addEventListener("click", () => {
     exportProcessedOBJ();
   } catch (error) {
     console.error(error);
-    setStatus(`OBJ export failed.\n${error.message}`);
+    setStatus(`OBJ export failed. ${error.message}`);
   }
 });
 
@@ -623,6 +658,6 @@ exportGlbBtn.addEventListener("click", () => {
     exportProcessedGLB();
   } catch (error) {
     console.error(error);
-    setStatus(`GLB export failed.\n${error.message}`);
+    setStatus(`GLB export failed. ${error.message}`);
   }
 });
