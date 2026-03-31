@@ -3,35 +3,38 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
 import { OBJExporter } from "three/addons/exporters/OBJExporter.js";
 import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
+import * as BufferGeometryUtils from "three/addons/utils/BufferGeometryUtils.js";
 
 const viewer = document.getElementById("viewer");
 const objFileInput = document.getElementById("objFileInput");
+
 const methodSelect = document.getElementById("methodSelect");
+
 const strengthSlider = document.getElementById("strengthSlider");
 const iterationSlider = document.getElementById("iterationSlider");
 const featureAngleSlider = document.getElementById("featureAngleSlider");
 
+const radialSlider = document.getElementById("radialSlider");
+const verticalSlider = document.getElementById("verticalSlider");
+
+const wireframeToggle = document.getElementById("wireframeToggle");
+
 const strengthValue = document.getElementById("strengthValue");
 const iterationValue = document.getElementById("iterationValue");
 const featureAngleValue = document.getElementById("featureAngleValue");
+const radialValue = document.getElementById("radialValue");
+const verticalValue = document.getElementById("verticalValue");
 
 const applyBtn = document.getElementById("applyBtn");
+const optimizeBtn = document.getElementById("optimizeBtn");
 const resetBtn = document.getElementById("resetBtn");
 const exportObjBtn = document.getElementById("exportObjBtn");
 const exportGlbBtn = document.getElementById("exportGlbBtn");
+
 const statusEl = document.getElementById("status");
 
-strengthSlider.addEventListener("input", () => {
-  strengthValue.textContent = Number(strengthSlider.value).toFixed(2);
-});
-
-iterationSlider.addEventListener("input", () => {
-  iterationValue.textContent = iterationSlider.value;
-});
-
-featureAngleSlider.addEventListener("input", () => {
-  featureAngleValue.textContent = featureAngleSlider.value;
-});
+const featureControls = document.getElementById("featureControls");
+const optimizationControls = document.getElementById("optimizationControls");
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0f172a);
@@ -66,6 +69,7 @@ scene.add(grid);
 let originalGeometry = null;
 let processedGeometry = null;
 let previewMesh = null;
+let previewWireframe = null;
 
 const previewGroup = new THREE.Group();
 scene.add(previewGroup);
@@ -73,6 +77,23 @@ scene.add(previewGroup);
 function setStatus(message) {
   statusEl.textContent = `Status: ${String(message).replace(/\n/g, " ")}`;
 }
+
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+window.addEventListener("resize", () => {
+  camera.aspect = viewer.clientWidth / viewer.clientHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(viewer.clientWidth, viewer.clientHeight);
+
+  if (previewMesh) {
+    framePreviewMesh(previewMesh);
+  }
+});
 
 function normalizeMethod(value) {
   const method = String(value || "").trim().toLowerCase();
@@ -97,39 +118,84 @@ function normalizeMethod(value) {
   return "";
 }
 
-function animate() {
-  requestAnimationFrame(animate);
-  controls.update();
-  renderer.render(scene, camera);
+function updateRangeLabels() {
+  if (strengthValue && strengthSlider) {
+    strengthValue.textContent = Number(strengthSlider.value).toFixed(2);
+  }
+
+  if (iterationValue && iterationSlider) {
+    iterationValue.textContent = iterationSlider.value;
+  }
+
+  if (featureAngleValue && featureAngleSlider) {
+    featureAngleValue.textContent = featureAngleSlider.value;
+  }
+
+  if (radialValue && radialSlider) {
+    radialValue.textContent = radialSlider.value;
+  }
+
+  if (verticalValue && verticalSlider) {
+    verticalValue.textContent = verticalSlider.value;
+  }
 }
-animate();
 
-window.addEventListener("resize", () => {
-  camera.aspect = viewer.clientWidth / viewer.clientHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(viewer.clientWidth, viewer.clientHeight);
+function updateParameterVisibility() {
+  const method = normalizeMethod(methodSelect?.value);
 
-  if (previewMesh) {
-    framePreviewMesh(previewMesh);
+  if (featureControls) {
+    featureControls.style.display = method === "feature" ? "block" : "none";
+  }
+
+  if (optimizationControls) {
+    optimizationControls.style.display = "block";
+  }
+}
+
+strengthSlider?.addEventListener("input", updateRangeLabels);
+iterationSlider?.addEventListener("input", updateRangeLabels);
+featureAngleSlider?.addEventListener("input", updateRangeLabels);
+radialSlider?.addEventListener("input", updateRangeLabels);
+verticalSlider?.addEventListener("input", updateRangeLabels);
+
+methodSelect?.addEventListener("change", updateParameterVisibility);
+
+wireframeToggle?.addEventListener("change", () => {
+  if (previewWireframe) {
+    previewWireframe.visible = !!wireframeToggle.checked;
   }
 });
 
-function disposeMesh(mesh) {
-  if (!mesh) return;
-  mesh.geometry?.dispose();
+updateRangeLabels();
+updateParameterVisibility();
 
-  if (Array.isArray(mesh.material)) {
-    mesh.material.forEach((m) => m.dispose?.());
-  } else {
-    mesh.material?.dispose?.();
-  }
+function disposeObject3D(object) {
+  if (!object) return;
+
+  object.traverse?.((child) => {
+    if (child.geometry) {
+      child.geometry.dispose?.();
+    }
+
+    if (Array.isArray(child.material)) {
+      child.material.forEach((m) => m.dispose?.());
+    } else {
+      child.material?.dispose?.();
+    }
+  });
 }
 
 function clearPreviewMeshes() {
   if (previewMesh) {
     previewGroup.remove(previewMesh);
-    disposeMesh(previewMesh);
+    disposeObject3D(previewMesh);
     previewMesh = null;
+  }
+
+  if (previewWireframe) {
+    previewGroup.remove(previewWireframe);
+    disposeObject3D(previewWireframe);
+    previewWireframe = null;
   }
 }
 
@@ -158,11 +224,54 @@ function convertToIndexedIfNeeded(geometry) {
 
   const indexed = new THREE.BufferGeometry();
   const vertices = new Float32Array(unique.flat());
+
   indexed.setAttribute("position", new THREE.BufferAttribute(vertices, 3));
   indexed.setIndex(indices);
   indexed.computeVertexNormals();
 
   return indexed;
+}
+
+function mergeGeometriesSafe(geometries) {
+  if (geometries.length === 1) {
+    return geometries[0];
+  }
+
+  const mergeFn =
+    BufferGeometryUtils.mergeGeometries ||
+    BufferGeometryUtils.mergeBufferGeometries;
+
+  if (!mergeFn) {
+    throw new Error("Geometry merge function not found in BufferGeometryUtils.");
+  }
+
+  return mergeFn(geometries, false);
+}
+
+function extractMergedGeometryFromOBJ(objText) {
+  const loader = new OBJLoader();
+  const object = loader.parse(objText);
+
+  object.updateMatrixWorld(true);
+
+  const geometries = [];
+
+  object.traverse((child) => {
+    if (!child.isMesh || !child.geometry) return;
+
+    const geometry = child.geometry.clone();
+    geometry.applyMatrix4(child.matrixWorld);
+    geometries.push(convertToIndexedIfNeeded(geometry));
+  });
+
+  if (geometries.length === 0) {
+    throw new Error("No mesh geometry found in the OBJ file.");
+  }
+
+  const merged = mergeGeometriesSafe(geometries);
+  merged.computeVertexNormals();
+
+  return convertToIndexedIfNeeded(merged);
 }
 
 function buildVertexAdjacency(indexArray, vertexCount) {
@@ -404,7 +513,70 @@ function featurePreservingSmooth(
   return indexedGeometry;
 }
 
-function createDisplayMesh(geometry, color) {
+function optimizeProfiledCylinder(
+  geometry,
+  radialSegments = 32,
+  verticalSlices = 24
+) {
+  const indexedGeometry = convertToIndexedIfNeeded(geometry.clone());
+  indexedGeometry.computeBoundingBox();
+
+  const box = indexedGeometry.boundingBox.clone();
+  const center = box.getCenter(new THREE.Vector3());
+
+  const minY = box.min.y;
+  const maxY = box.max.y;
+  const height = Math.max(maxY - minY, 1e-6);
+  const sliceThickness = height / Math.max(1, verticalSlices);
+
+  const positions = indexedGeometry.attributes.position.array;
+  const slicePoints = [];
+
+  slicePoints.push(new THREE.Vector2(0, minY - center.y));
+
+  for (let s = 0; s <= verticalSlices; s++) {
+    const currentY = minY + s * sliceThickness;
+    const layerRadii = [];
+
+    for (let i = 0; i < positions.length; i += 3) {
+      const px = positions[i + 0];
+      const py = positions[i + 1];
+      const pz = positions[i + 2];
+
+      if (Math.abs(py - currentY) <= sliceThickness * 0.75) {
+        const dx = px - center.x;
+        const dz = pz - center.z;
+        layerRadii.push(Math.hypot(dx, dz));
+      }
+    }
+
+    let sliceRadius = 0;
+
+    if (layerRadii.length > 0) {
+      layerRadii.sort((a, b) => a - b);
+      const percentileIndex = Math.floor((layerRadii.length - 1) * 0.75);
+      sliceRadius = layerRadii[Math.max(0, percentileIndex)];
+    } else if (slicePoints.length > 0) {
+      sliceRadius = slicePoints[slicePoints.length - 1].x;
+    }
+
+    slicePoints.push(new THREE.Vector2(sliceRadius, currentY - center.y));
+  }
+
+  slicePoints.push(new THREE.Vector2(0, maxY - center.y));
+
+  const optimized = new THREE.LatheGeometry(
+    slicePoints,
+    Math.max(8, radialSegments)
+  );
+
+  optimized.translate(center.x, center.y, center.z);
+  optimized.computeVertexNormals();
+
+  return convertToIndexedIfNeeded(optimized);
+}
+
+function createDisplayMesh(geometry, color = 0x60a5fa) {
   const material = new THREE.MeshStandardMaterial({
     color,
     metalness: 0.1,
@@ -414,28 +586,23 @@ function createDisplayMesh(geometry, color) {
   return new THREE.Mesh(geometry, material);
 }
 
+function createWireframeOverlay(geometry) {
+  const wireGeometry = new THREE.WireframeGeometry(geometry);
+  const wireMaterial = new THREE.LineBasicMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.35,
+  });
+
+  return new THREE.LineSegments(wireGeometry, wireMaterial);
+}
+
 function createPreviewGeometry(sourceGeometry) {
   const previewGeometry = sourceGeometry.clone();
   previewGeometry.computeBoundingBox();
   previewGeometry.center();
   previewGeometry.computeVertexNormals();
   return previewGeometry;
-}
-
-function rebuildPreview() {
-  clearPreviewMeshes();
-
-  const geometryToShow = processedGeometry || originalGeometry;
-  if (!geometryToShow) return;
-
-  previewGroup.position.set(0, 0, 0);
-
-  const previewGeometry = createPreviewGeometry(geometryToShow);
-  previewMesh = createDisplayMesh(previewGeometry, 0x60a5fa);
-  previewMesh.name = "previewMesh";
-
-  previewGroup.add(previewMesh);
-  framePreviewMesh(previewMesh);
 }
 
 function framePreviewMesh(mesh) {
@@ -465,23 +632,37 @@ function framePreviewMesh(mesh) {
   controls.update();
 }
 
+function rebuildPreview() {
+  clearPreviewMeshes();
+
+  const geometryToShow = processedGeometry || originalGeometry;
+  if (!geometryToShow) return;
+
+  previewGroup.position.set(0, 0, 0);
+
+  const previewGeometry = createPreviewGeometry(geometryToShow);
+  previewMesh = createDisplayMesh(previewGeometry, 0x60a5fa);
+  previewMesh.name = "previewMesh";
+
+  previewGroup.add(previewMesh);
+
+  previewWireframe = createWireframeOverlay(previewGeometry);
+  previewWireframe.visible = !!wireframeToggle?.checked;
+  previewGroup.add(previewWireframe);
+
+  framePreviewMesh(previewMesh);
+}
+
+function getWorkingGeometry() {
+  if (processedGeometry) return processedGeometry.clone();
+  if (originalGeometry) return originalGeometry.clone();
+  return null;
+}
+
 async function loadOBJFromText(objText) {
-  const loader = new OBJLoader();
-  const object = loader.parse(objText);
+  const mergedGeometry = extractMergedGeometryFromOBJ(objText);
 
-  let firstMeshGeometry = null;
-
-  object.traverse((child) => {
-    if (child.isMesh && !firstMeshGeometry) {
-      firstMeshGeometry = child.geometry.clone();
-    }
-  });
-
-  if (!firstMeshGeometry) {
-    throw new Error("No mesh geometry found in the OBJ file.");
-  }
-
-  originalGeometry = convertToIndexedIfNeeded(firstMeshGeometry.clone());
+  originalGeometry = convertToIndexedIfNeeded(mergedGeometry.clone());
   processedGeometry = originalGeometry.clone();
 
   rebuildPreview();
@@ -491,50 +672,53 @@ async function loadOBJFromText(objText) {
 function downloadBlob(blob, fileName) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
+
   a.href = url;
   a.download = fileName;
+
   document.body.appendChild(a);
   a.click();
   a.remove();
+
   URL.revokeObjectURL(url);
 }
 
-function exportProcessedOBJ() {
-  if (!processedGeometry) {
+function exportCurrentOBJ() {
+  const geometryToExport = processedGeometry || originalGeometry;
+
+  if (!geometryToExport) {
     setStatus("Load and process a mesh first.");
     return;
   }
 
   const tempMesh = new THREE.Mesh(
-    processedGeometry.clone(),
+    geometryToExport.clone(),
     new THREE.MeshStandardMaterial({ color: 0xffffff })
   );
-
-  tempMesh.position.set(0, 0, 0);
-  tempMesh.rotation.set(0, 0, 0);
-  tempMesh.scale.set(1, 1, 1);
 
   const exporter = new OBJExporter();
   const objText = exporter.parse(tempMesh);
   const blob = new Blob([objText], { type: "text/plain" });
 
-  downloadBlob(blob, "smoothed_mesh.obj");
+  downloadBlob(blob, "processed_mesh.obj");
 
   tempMesh.geometry.dispose();
   tempMesh.material.dispose();
 
-  setStatus("Exported processed mesh as OBJ.");
+  setStatus("Exported current mesh as OBJ.");
 }
 
-function exportProcessedGLB() {
-  if (!processedGeometry) {
+function exportCurrentGLB() {
+  const geometryToExport = processedGeometry || originalGeometry;
+
+  if (!geometryToExport) {
     setStatus("Load and process a mesh first.");
     return;
   }
 
   const tempScene = new THREE.Scene();
   const tempMesh = new THREE.Mesh(
-    processedGeometry.clone(),
+    geometryToExport.clone(),
     new THREE.MeshStandardMaterial({
       color: 0x60a5fa,
       metalness: 0.1,
@@ -550,12 +734,12 @@ function exportProcessedGLB() {
     tempScene,
     (result) => {
       const blob = new Blob([result], { type: "model/gltf-binary" });
-      downloadBlob(blob, "smoothed_mesh.glb");
+      downloadBlob(blob, "processed_mesh.glb");
 
       tempMesh.geometry.dispose();
       tempMesh.material.dispose();
 
-      setStatus("Exported processed mesh as GLB.");
+      setStatus("Exported current mesh as GLB.");
     },
     (error) => {
       console.error(error);
@@ -565,7 +749,7 @@ function exportProcessedGLB() {
   );
 }
 
-objFileInput.addEventListener("change", async (event) => {
+objFileInput?.addEventListener("change", async (event) => {
   const file = event.target.files?.[0];
   if (!file) return;
 
@@ -579,7 +763,7 @@ objFileInput.addEventListener("change", async (event) => {
   }
 });
 
-applyBtn.addEventListener("click", () => {
+applyBtn?.addEventListener("click", () => {
   if (!originalGeometry) {
     setStatus("Please load an OBJ mesh first.");
     return;
@@ -588,32 +772,39 @@ applyBtn.addEventListener("click", () => {
   try {
     const rawMethod = methodSelect?.value;
     const method = normalizeMethod(rawMethod);
-    const strength = Number(strengthSlider.value);
-    const iterations = Number(iterationSlider.value);
-    const featureAngle = Number(featureAngleSlider.value);
 
     if (!method) {
       setStatus(`Unknown smoothing method selected: ${rawMethod}`);
       return;
     }
 
+    const sourceGeometry = getWorkingGeometry();
+    if (!sourceGeometry) {
+      setStatus("No geometry available.");
+      return;
+    }
+
+    const strength = Number(strengthSlider?.value ?? 0.2);
+    const iterations = Number(iterationSlider?.value ?? 5);
+    const featureAngle = Number(featureAngleSlider?.value ?? 35);
+
     setStatus(`Applying ${method} smoothing...`);
 
     if (method === "laplacian") {
       processedGeometry = laplacianSmooth(
-        originalGeometry,
+        sourceGeometry,
         strength,
         iterations
       );
     } else if (method === "taubin") {
       processedGeometry = taubinSmooth(
-        originalGeometry,
+        sourceGeometry,
         strength,
         iterations
       );
     } else if (method === "feature") {
       processedGeometry = featurePreservingSmooth(
-        originalGeometry,
+        sourceGeometry,
         strength,
         iterations,
         featureAngle
@@ -623,9 +814,9 @@ applyBtn.addEventListener("click", () => {
     rebuildPreview();
 
     setStatus(
-      `Smoothing complete. Showing processed mesh only. Method: ${method}. Strength: ${strength.toFixed(
+      `Smoothing complete. Method: ${method}. Strength: ${strength.toFixed(
         2
-      )}. Iterations: ${iterations}. Feature angle: ${featureAngle}°`
+      )}. Iterations: ${iterations}. Feature angle: ${featureAngle}°.`
     );
   } catch (error) {
     console.error(error);
@@ -633,7 +824,42 @@ applyBtn.addEventListener("click", () => {
   }
 });
 
-resetBtn.addEventListener("click", () => {
+optimizeBtn?.addEventListener("click", () => {
+  if (!originalGeometry) {
+    setStatus("Please load an OBJ mesh first.");
+    return;
+  }
+
+  try {
+    const sourceGeometry = getWorkingGeometry();
+    if (!sourceGeometry) {
+      setStatus("No geometry available.");
+      return;
+    }
+
+    const radialSegments = Number(radialSlider?.value ?? 32);
+    const verticalSlices = Number(verticalSlider?.value ?? 24);
+
+    setStatus("Applying mesh optimization...");
+
+    processedGeometry = optimizeProfiledCylinder(
+      sourceGeometry,
+      radialSegments,
+      verticalSlices
+    );
+
+    rebuildPreview();
+
+    setStatus(
+      `Optimization complete. Radial segments: ${radialSegments}. Vertical slices: ${verticalSlices}.`
+    );
+  } catch (error) {
+    console.error(error);
+    setStatus(`Optimization failed. ${error.message}`);
+  }
+});
+
+resetBtn?.addEventListener("click", () => {
   if (!originalGeometry) {
     setStatus("Nothing to reset yet.");
     return;
@@ -644,18 +870,18 @@ resetBtn.addEventListener("click", () => {
   setStatus("Processed mesh reset to original.");
 });
 
-exportObjBtn.addEventListener("click", () => {
+exportObjBtn?.addEventListener("click", () => {
   try {
-    exportProcessedOBJ();
+    exportCurrentOBJ();
   } catch (error) {
     console.error(error);
     setStatus(`OBJ export failed. ${error.message}`);
   }
 });
 
-exportGlbBtn.addEventListener("click", () => {
+exportGlbBtn?.addEventListener("click", () => {
   try {
-    exportProcessedGLB();
+    exportCurrentGLB();
   } catch (error) {
     console.error(error);
     setStatus(`GLB export failed. ${error.message}`);

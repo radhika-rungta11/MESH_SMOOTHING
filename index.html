@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Mesh Smoothing Viewer</title>
+  <title>Mesh Smoothing and Optimization Viewer</title>
 
   <script src="https://cdn.tailwindcss.com"></script>
 
@@ -21,9 +21,9 @@
 <body>
   <div id="app">
     <div id="ui-panel" class="glass">
-      <h1>Mesh Smoothing</h1>
+      <h1>Mesh Smoothing and Optimization</h1>
       <p class="subtitle">
-        Load any OBJ mesh and interactively control surface smoothing.
+        Load an OBJ mesh, apply smoothing, or generate an optimized rotational mesh.
       </p>
 
       <label class="field">
@@ -35,7 +35,7 @@
         <span>Smoothing Method</span>
         <select id="methodSelect">
           <option value="Laplacian">Laplacian</option>
-          <option value="Taubin" >Taubin </option>
+          <option value="Taubin">Taubin</option>
           <option value="Feature-Preserving">Feature-preserving</option>
         </select>
       </label>
@@ -63,28 +63,70 @@
           value="5"
         />
       </label>
-      <label class="field">
-  <span>Feature Angle Threshold: <strong id="featureAngleValue">35</strong>°</span>
-  <input
-    type="range"
-    id="featureAngleSlider"
-    min="5"
-    max="80"
-    step="1"
-    value="35"
-  />
-</label>
+
+      <div id="featureControls">
+        <label class="field">
+          <span>Feature Angle Threshold: <strong id="featureAngleValue">35</strong>°</span>
+          <input
+            type="range"
+            id="featureAngleSlider"
+            min="5"
+            max="80"
+            step="1"
+            value="35"
+          />
+        </label>
+      </div>
+
+      <div id="optimizationControls">
+        <label class="field">
+          <span>Radial Segments: <strong id="radialValue">32</strong></span>
+          <input
+            type="range"
+            id="radialSlider"
+            min="8"
+            max="128"
+            step="1"
+            value="32"
+          />
+        </label>
+
+        <label class="field">
+          <span>Vertical Slices: <strong id="verticalValue">24</strong></span>
+          <input
+            type="range"
+            id="verticalSlider"
+            min="4"
+            max="64"
+            step="1"
+            value="24"
+          />
+        </label>
+
+        <label class="field">
+          <span>Show Wireframe</span>
+          <input
+            type="checkbox"
+            id="wireframeToggle"
+            checked
+          />
+        </label>
+      </div>
 
       <div class="button-row">
         <button id="applyBtn">Apply Smoothing</button>
+        <button id="optimizeBtn">Optimize Mesh</button>
+      </div>
+
+      <div class="button-row">
         <button id="resetBtn">Reset Mesh</button>
       </div>
 
-   <div class="button-row">
-  <button id="exportObjBtn">Export OBJ</button>
-  <button id="exportGlbBtn">Export GLB</button>
-</div>
-      
+      <div class="button-row">
+        <button id="exportObjBtn">Export OBJ</button>
+        <button id="exportGlbBtn">Export GLB</button>
+      </div>
+
       <div id="status">Status: waiting for OBJ file</div>
     </div>
 
