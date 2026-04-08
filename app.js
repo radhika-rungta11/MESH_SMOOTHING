@@ -4,6 +4,7 @@ import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
 import { OBJExporter } from "three/addons/exporters/OBJExporter.js";
 import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
 import * as BufferGeometryUtils from "three/addons/utils/BufferGeometryUtils.js";
+import { transferUVsFromSourceMesh } from "./uvTransfer.js";
 
 const viewer = document.getElementById("viewer");
 const objFileInput = document.getElementById("objFileInput");
@@ -635,6 +636,86 @@ function ensureTextureReadyGeometry(geometry) {
   return output;
 }
 
+function getSourceTextureGeometry() {
+  if (!originalGeometry) return null;
+
+  let source = convertToIndexedIfNeeded(originalGeometry.clone());
+
+  if (!geometryHasUVs(source)) {
+    source = generateCylindricalUVs(source);
+  }
+
+  if (!geometryHasNormals(source)) {
+    source.computeVertexNormals();
+  }
+
+  return source;
+}
+
+function transferTextureUVsToGeometry(targetGeometry) {
+  if (!targetGeometry) return null;
+
+  const target = convertToIndexedIfNeeded(targetGeometry.clone());
+  const source = getSourceTextureGeometry();
+
+  if (!source) {
+    return ensureTextureReadyGeometry(target);
+  }
+
+  try {
+    const sourceMaterial = new THREE.MeshBasicMaterial();
+    const targetMaterial = new THREE.MeshBasicMaterial();
+
+    const sourceMesh = new THREE.Mesh(source, sourceMaterial);
+    const targetMesh = new THREE.Mesh(target, targetMaterial);
+
+    const transferred = transferUVsFromSourceMesh({
+      sourceMesh,
+      targetMesh,
+      debug: false,
+    });
+
+    sourceMaterial.dispose();
+    targetMaterial.dispose();
+
+    let output = transferred;
+
+    if (!geometryHasNormals(output)) {
+      output.computeVertexNormals();
+    }
+
+    return convertToIndexedIfNeeded(output);
+  } catch (error) {
+    console.warn("UV transfer failed. Falling back to generated UVs.", error);
+    return ensureTextureReadyGeometry(target);
+  }
+}
+
+function buildTexturedGeometryForDisplay(targetGeometry) {
+  if (!targetGeometry) return null;
+
+  const base = convertToIndexedIfNeeded(targetGeometry.clone());
+
+  if (!uploadedTexture) {
+    if (!geometryHasNormals(base)) {
+      base.computeVertexNormals();
+    }
+    return base;
+  }
+
+  // If the geometry already has UVs (e.g. optimized cylinder or unwrapped mesh),
+  // keep those UVs instead of trying to re‑project from the original mesh.
+  if (geometryHasUVs(base)) {
+    if (!geometryHasNormals(base)) {
+      base.computeVertexNormals();
+    }
+    return base;
+  }
+
+  // Only fall back to UV transfer / cylindrical generation when UVs are missing.
+  return transferTextureUVsToGeometry(base);
+}
+
 function optimizeProfiledCylinder(
   geometry,
   radialSegments = 32,
@@ -695,8 +776,16 @@ function optimizeProfiledCylinder(
   optimized.translate(center.x, center.y, center.z);
   optimized.computeVertexNormals();
 
+  // Build a clean, cylindrical UV layout directly on the optimized can mesh
+  // so that textures wrap evenly around the surface.
   const indexedOptimized = convertToIndexedIfNeeded(optimized);
-  return ensureTextureReadyGeometry(indexedOptimized);
+  const uvOptimized = generateCylindricalUVs(indexedOptimized);
+
+  if (!geometryHasNormals(uvOptimized)) {
+    uvOptimized.computeVertexNormals();
+  }
+
+  return uvOptimized;
 }
 
 function createDisplayMaterial() {
@@ -730,11 +819,7 @@ function createWireframeOverlay(geometry) {
 }
 
 function createPreviewGeometry(sourceGeometry) {
-  let previewGeometry = sourceGeometry.clone();
-
-  if (uploadedTexture) {
-    previewGeometry = ensureTextureReadyGeometry(previewGeometry);
-  }
+  let previewGeometry = buildTexturedGeometryForDisplay(sourceGeometry);
 
   previewGeometry.computeBoundingBox();
   previewGeometry.center();
@@ -806,9 +891,9 @@ async function loadOBJFromText(objText) {
   rebuildPreview();
 
   if (geometryHasUVs(originalGeometry)) {
-    setStatus("OBJ loaded. UVs detected. Add texture image to preview textured mesh.");
+    setStatus("OBJ loaded. Source UVs detected. Texture transfer is ready.");
   } else {
-    setStatus("OBJ loaded. No UVs found. Texture will use generated cylindrical UVs.");
+    setStatus("OBJ loaded. No source UVs found. Fallback cylindrical UVs will be used.");
   }
 }
 
@@ -838,7 +923,12 @@ async function loadTextureFromFile(file) {
   uploadedTexture = texture;
 
   rebuildPreview();
-  setStatus(`Texture loaded: ${uploadedTextureName}. Preview updated.`);
+
+  if (originalGeometry && geometryHasUVs(originalGeometry)) {
+    setStatus(`Texture loaded: ${uploadedTextureName}. Preview updated with UV transfer.`);
+  } else {
+    setStatus(`Texture loaded: ${uploadedTextureName}. Preview updated with fallback UVs.`);
+  }
 }
 
 function downloadBlob(blob, fileName) {
@@ -864,7 +954,7 @@ function exportCurrentOBJ() {
   }
 
   const exportGeometry = uploadedTexture
-    ? ensureTextureReadyGeometry(geometryToExport)
+    ? buildTexturedGeometryForDisplay(geometryToExport)
     : geometryToExport.clone();
 
   const tempMesh = new THREE.Mesh(
@@ -882,7 +972,7 @@ function exportCurrentOBJ() {
   tempMesh.material.dispose();
 
   if (uploadedTexture) {
-    setStatus("OBJ exported. Geometry exported, but texture image is not packed into OBJ here. Use GLB to keep texture.");
+    setStatus("OBJ exported. Geometry includes transferred UVs, but texture image is not packed into OBJ.");
   } else {
     setStatus("Exported current mesh as OBJ.");
   }
@@ -897,7 +987,7 @@ function exportCurrentGLB() {
   }
 
   const exportGeometry = uploadedTexture
-    ? ensureTextureReadyGeometry(geometryToExport)
+    ? buildTexturedGeometryForDisplay(geometryToExport)
     : geometryToExport.clone();
 
   const tempScene = new THREE.Scene();
@@ -916,7 +1006,7 @@ function exportCurrentGLB() {
       tempMesh.geometry.dispose();
       tempMesh.material.dispose();
 
-      setStatus("Exported current mesh as textured GLB.");
+      setStatus("Exported current mesh as textured GLB with transferred UVs.");
     },
     (error) => {
       console.error(error);
@@ -1040,9 +1130,13 @@ optimizeBtn?.addEventListener("click", () => {
 
     rebuildPreview();
 
-    if (uploadedTexture) {
+    if (uploadedTexture && geometryHasUVs(originalGeometry)) {
       setStatus(
-        `Optimization complete with texture-ready UVs. Radial segments: ${radialSegments}. Vertical slices: ${verticalSlices}.`
+        `Optimization complete with transferred source UVs. Radial segments: ${radialSegments}. Vertical slices: ${verticalSlices}.`
+      );
+    } else if (uploadedTexture) {
+      setStatus(
+        `Optimization complete with fallback UVs. Radial segments: ${radialSegments}. Vertical slices: ${verticalSlices}.`
       );
     } else {
       setStatus(
