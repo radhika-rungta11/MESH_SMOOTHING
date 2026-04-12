@@ -7,6 +7,7 @@ import * as BufferGeometryUtils from "three/addons/utils/BufferGeometryUtils.js"
 
 const viewer = document.getElementById("viewer");
 const objFileInput = document.getElementById("objFileInput");
+const textureFileInput = document.getElementById("textureFileInput");
 
 const methodSelect = document.getElementById("methodSelect");
 
@@ -68,8 +69,13 @@ scene.add(grid);
 
 let originalGeometry = null;
 let processedGeometry = null;
+
 let previewMesh = null;
 let previewWireframe = null;
+
+let uploadedTexture = null;
+let uploadedTextureURL = null;
+let uploadedTextureName = "";
 
 const previewGroup = new THREE.Group();
 scene.add(previewGroup);
@@ -169,6 +175,11 @@ wireframeToggle?.addEventListener("change", () => {
 updateRangeLabels();
 updateParameterVisibility();
 
+function disposeTexture(texture) {
+  if (!texture) return;
+  texture.dispose?.();
+}
+
 function disposeObject3D(object) {
   if (!object) return;
 
@@ -178,9 +189,13 @@ function disposeObject3D(object) {
     }
 
     if (Array.isArray(child.material)) {
-      child.material.forEach((m) => m.dispose?.());
-    } else {
-      child.material?.dispose?.();
+      child.material.forEach((m) => {
+        if (m.map) m.map.dispose?.();
+        m.dispose?.();
+      });
+    } else if (child.material) {
+      if (child.material.map) child.material.map.dispose?.();
+      child.material.dispose?.();
     }
   });
 }
@@ -199,35 +214,92 @@ function clearPreviewMeshes() {
   }
 }
 
+function geometryHasUVs(geometry) {
+  return !!geometry?.attributes?.uv && geometry.attributes.uv.count > 0;
+}
+
+function geometryHasNormals(geometry) {
+  return !!geometry?.attributes?.normal && geometry.attributes.normal.count > 0;
+}
+
 function convertToIndexedIfNeeded(geometry) {
   if (geometry.index) return geometry;
 
-  const pos = geometry.attributes.position;
-  const map = new Map();
-  const unique = [];
+  const pos = geometry.getAttribute("position");
+  const uv = geometry.getAttribute("uv");
+  const normal = geometry.getAttribute("normal");
+
+  const uniquePositions = [];
+  const uniqueUVs = [];
+  const uniqueNormals = [];
   const indices = [];
+  const map = new Map();
 
   for (let i = 0; i < pos.count; i++) {
+    const px = pos.getX(i);
+    const py = pos.getY(i);
+    const pz = pos.getZ(i);
+
+    const ux = uv ? uv.getX(i) : null;
+    const uy = uv ? uv.getY(i) : null;
+
+    const nx = normal ? normal.getX(i) : null;
+    const ny = normal ? normal.getY(i) : null;
+    const nz = normal ? normal.getZ(i) : null;
+
     const key = [
-      pos.getX(i).toFixed(6),
-      pos.getY(i).toFixed(6),
-      pos.getZ(i).toFixed(6),
+      px.toFixed(6),
+      py.toFixed(6),
+      pz.toFixed(6),
+      ux !== null ? ux.toFixed(6) : "nou",
+      uy !== null ? uy.toFixed(6) : "nov",
+      nx !== null ? nx.toFixed(6) : "nonx",
+      ny !== null ? ny.toFixed(6) : "nony",
+      nz !== null ? nz.toFixed(6) : "nonz",
     ].join(",");
 
     if (!map.has(key)) {
-      map.set(key, unique.length);
-      unique.push([pos.getX(i), pos.getY(i), pos.getZ(i)]);
+      map.set(key, uniquePositions.length / 3);
+
+      uniquePositions.push(px, py, pz);
+
+      if (uv) {
+        uniqueUVs.push(ux, uy);
+      }
+
+      if (normal) {
+        uniqueNormals.push(nx, ny, nz);
+      }
     }
 
     indices.push(map.get(key));
   }
 
   const indexed = new THREE.BufferGeometry();
-  const vertices = new Float32Array(unique.flat());
+  indexed.setAttribute(
+    "position",
+    new THREE.BufferAttribute(new Float32Array(uniquePositions), 3)
+  );
 
-  indexed.setAttribute("position", new THREE.BufferAttribute(vertices, 3));
+  if (uv && uniqueUVs.length > 0) {
+    indexed.setAttribute(
+      "uv",
+      new THREE.BufferAttribute(new Float32Array(uniqueUVs), 2)
+    );
+  }
+
+  if (normal && uniqueNormals.length > 0) {
+    indexed.setAttribute(
+      "normal",
+      new THREE.BufferAttribute(new Float32Array(uniqueNormals), 3)
+    );
+  }
+
   indexed.setIndex(indices);
-  indexed.computeVertexNormals();
+
+  if (!geometryHasNormals(indexed)) {
+    indexed.computeVertexNormals();
+  }
 
   return indexed;
 }
@@ -261,7 +333,9 @@ function extractMergedGeometryFromOBJ(objText) {
 
     const geometry = child.geometry.clone();
     geometry.applyMatrix4(child.matrixWorld);
-    geometries.push(convertToIndexedIfNeeded(geometry));
+
+    const indexed = convertToIndexedIfNeeded(geometry);
+    geometries.push(indexed);
   });
 
   if (geometries.length === 0) {
@@ -269,7 +343,10 @@ function extractMergedGeometryFromOBJ(objText) {
   }
 
   const merged = mergeGeometriesSafe(geometries);
-  merged.computeVertexNormals();
+
+  if (!geometryHasNormals(merged)) {
+    merged.computeVertexNormals();
+  }
 
   return convertToIndexedIfNeeded(merged);
 }
@@ -513,6 +590,51 @@ function featurePreservingSmooth(
   return indexedGeometry;
 }
 
+function generateCylindricalUVs(geometry) {
+  const result = geometry.clone();
+  result.computeBoundingBox();
+
+  const box = result.boundingBox;
+  const center = box.getCenter(new THREE.Vector3());
+  const minY = box.min.y;
+  const maxY = box.max.y;
+  const height = Math.max(maxY - minY, 1e-6);
+
+  const pos = result.getAttribute("position");
+  const uvArray = new Float32Array(pos.count * 2);
+
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i) - center.x;
+    const y = pos.getY(i);
+    const z = pos.getZ(i) - center.z;
+
+    let u = Math.atan2(z, x) / (Math.PI * 2);
+    if (u < 0) u += 1;
+
+    const v = (y - minY) / height;
+
+    uvArray[i * 2 + 0] = u;
+    uvArray[i * 2 + 1] = THREE.MathUtils.clamp(v, 0, 1);
+  }
+
+  result.setAttribute("uv", new THREE.BufferAttribute(uvArray, 2));
+  return result;
+}
+
+function ensureTextureReadyGeometry(geometry) {
+  let output = convertToIndexedIfNeeded(geometry.clone());
+
+  if (!geometryHasUVs(output)) {
+    output = generateCylindricalUVs(output);
+  }
+
+  if (!geometryHasNormals(output)) {
+    output.computeVertexNormals();
+  }
+
+  return output;
+}
+
 function optimizeProfiledCylinder(
   geometry,
   radialSegments = 32,
@@ -573,17 +695,27 @@ function optimizeProfiledCylinder(
   optimized.translate(center.x, center.y, center.z);
   optimized.computeVertexNormals();
 
-  return convertToIndexedIfNeeded(optimized);
+  const indexedOptimized = convertToIndexedIfNeeded(optimized);
+  return ensureTextureReadyGeometry(indexedOptimized);
 }
 
-function createDisplayMesh(geometry, color = 0x60a5fa) {
+function createDisplayMaterial() {
   const material = new THREE.MeshStandardMaterial({
-    color,
+    color: uploadedTexture ? 0xffffff : 0x60a5fa,
     metalness: 0.1,
     roughness: 0.65,
+    map: uploadedTexture || null,
   });
 
-  return new THREE.Mesh(geometry, material);
+  if (uploadedTexture) {
+    material.needsUpdate = true;
+  }
+
+  return material;
+}
+
+function createDisplayMesh(geometry) {
+  return new THREE.Mesh(geometry, createDisplayMaterial());
 }
 
 function createWireframeOverlay(geometry) {
@@ -598,10 +730,16 @@ function createWireframeOverlay(geometry) {
 }
 
 function createPreviewGeometry(sourceGeometry) {
-  const previewGeometry = sourceGeometry.clone();
+  let previewGeometry = sourceGeometry.clone();
+
+  if (uploadedTexture) {
+    previewGeometry = ensureTextureReadyGeometry(previewGeometry);
+  }
+
   previewGeometry.computeBoundingBox();
   previewGeometry.center();
   previewGeometry.computeVertexNormals();
+
   return previewGeometry;
 }
 
@@ -641,7 +779,7 @@ function rebuildPreview() {
   previewGroup.position.set(0, 0, 0);
 
   const previewGeometry = createPreviewGeometry(geometryToShow);
-  previewMesh = createDisplayMesh(previewGeometry, 0x60a5fa);
+  previewMesh = createDisplayMesh(previewGeometry);
   previewMesh.name = "previewMesh";
 
   previewGroup.add(previewMesh);
@@ -666,7 +804,41 @@ async function loadOBJFromText(objText) {
   processedGeometry = originalGeometry.clone();
 
   rebuildPreview();
-  setStatus("OBJ loaded. Showing current mesh only.");
+
+  if (geometryHasUVs(originalGeometry)) {
+    setStatus("OBJ loaded. UVs detected. Add texture image to preview textured mesh.");
+  } else {
+    setStatus("OBJ loaded. No UVs found. Texture will use generated cylindrical UVs.");
+  }
+}
+
+async function loadTextureFromFile(file) {
+  if (!file) return;
+
+  if (uploadedTextureURL) {
+    URL.revokeObjectURL(uploadedTextureURL);
+    uploadedTextureURL = null;
+  }
+
+  disposeTexture(uploadedTexture);
+  uploadedTexture = null;
+
+  const objectURL = URL.createObjectURL(file);
+  uploadedTextureURL = objectURL;
+  uploadedTextureName = file.name;
+
+  const loader = new THREE.TextureLoader();
+  const texture = await loader.loadAsync(objectURL);
+
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.needsUpdate = true;
+
+  uploadedTexture = texture;
+
+  rebuildPreview();
+  setStatus(`Texture loaded: ${uploadedTextureName}. Preview updated.`);
 }
 
 function downloadBlob(blob, fileName) {
@@ -691,8 +863,12 @@ function exportCurrentOBJ() {
     return;
   }
 
+  const exportGeometry = uploadedTexture
+    ? ensureTextureReadyGeometry(geometryToExport)
+    : geometryToExport.clone();
+
   const tempMesh = new THREE.Mesh(
-    geometryToExport.clone(),
+    exportGeometry,
     new THREE.MeshStandardMaterial({ color: 0xffffff })
   );
 
@@ -705,7 +881,11 @@ function exportCurrentOBJ() {
   tempMesh.geometry.dispose();
   tempMesh.material.dispose();
 
-  setStatus("Exported current mesh as OBJ.");
+  if (uploadedTexture) {
+    setStatus("OBJ exported. Geometry exported, but texture image is not packed into OBJ here. Use GLB to keep texture.");
+  } else {
+    setStatus("Exported current mesh as OBJ.");
+  }
 }
 
 function exportCurrentGLB() {
@@ -716,15 +896,12 @@ function exportCurrentGLB() {
     return;
   }
 
+  const exportGeometry = uploadedTexture
+    ? ensureTextureReadyGeometry(geometryToExport)
+    : geometryToExport.clone();
+
   const tempScene = new THREE.Scene();
-  const tempMesh = new THREE.Mesh(
-    geometryToExport.clone(),
-    new THREE.MeshStandardMaterial({
-      color: 0x60a5fa,
-      metalness: 0.1,
-      roughness: 0.65,
-    })
-  );
+  const tempMesh = new THREE.Mesh(exportGeometry, createDisplayMaterial());
 
   tempScene.add(tempMesh);
 
@@ -734,12 +911,12 @@ function exportCurrentGLB() {
     tempScene,
     (result) => {
       const blob = new Blob([result], { type: "model/gltf-binary" });
-      downloadBlob(blob, "processed_mesh.glb");
+      downloadBlob(blob, "processed_textured_mesh.glb");
 
       tempMesh.geometry.dispose();
       tempMesh.material.dispose();
 
-      setStatus("Exported current mesh as GLB.");
+      setStatus("Exported current mesh as textured GLB.");
     },
     (error) => {
       console.error(error);
@@ -760,6 +937,19 @@ objFileInput?.addEventListener("change", async (event) => {
   } catch (error) {
     console.error(error);
     setStatus(`Failed to load OBJ. ${error.message}`);
+  }
+});
+
+textureFileInput?.addEventListener("change", async (event) => {
+  const file = event.target.files?.[0];
+  if (!file) return;
+
+  try {
+    setStatus("Loading texture image...");
+    await loadTextureFromFile(file);
+  } catch (error) {
+    console.error(error);
+    setStatus(`Failed to load texture. ${error.message}`);
   }
 });
 
@@ -850,9 +1040,15 @@ optimizeBtn?.addEventListener("click", () => {
 
     rebuildPreview();
 
-    setStatus(
-      `Optimization complete. Radial segments: ${radialSegments}. Vertical slices: ${verticalSlices}.`
-    );
+    if (uploadedTexture) {
+      setStatus(
+        `Optimization complete with texture-ready UVs. Radial segments: ${radialSegments}. Vertical slices: ${verticalSlices}.`
+      );
+    } else {
+      setStatus(
+        `Optimization complete. Radial segments: ${radialSegments}. Vertical slices: ${verticalSlices}.`
+      );
+    }
   } catch (error) {
     console.error(error);
     setStatus(`Optimization failed. ${error.message}`);
@@ -886,4 +1082,12 @@ exportGlbBtn?.addEventListener("click", () => {
     console.error(error);
     setStatus(`GLB export failed. ${error.message}`);
   }
+});
+
+window.addEventListener("beforeunload", () => {
+  if (uploadedTextureURL) {
+    URL.revokeObjectURL(uploadedTextureURL);
+    uploadedTextureURL = null;
+  }
+  disposeTexture(uploadedTexture);
 });

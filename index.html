@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Mesh Smoothing and Optimization Viewer</title>
+  <title>Mesh Smoothing, Optimization, and Texture Viewer</title>
 
   <script src="https://cdn.tailwindcss.com"></script>
 
@@ -23,12 +23,21 @@
     <div id="ui-panel" class="glass">
       <h1>Mesh Smoothing and Optimization</h1>
       <p class="subtitle">
-        Load an OBJ mesh, apply smoothing, or generate an optimized rotational mesh.
+        Load an OBJ mesh, add a texture image, apply smoothing, or generate an optimized rotational mesh.
       </p>
 
       <label class="field">
         <span>Load OBJ Mesh</span>
         <input type="file" id="objFileInput" accept=".obj" />
+      </label>
+
+      <label class="field">
+        <span>Load Texture Image</span>
+        <input
+          type="file"
+          id="textureFileInput"
+          accept=".png,.jpg,.jpeg,.webp"
+        />
       </label>
 
       <label class="field">
@@ -103,7 +112,7 @@
           />
         </label>
 
-        <label class="field">
+        <label class="field checkbox-field">
           <span>Show Wireframe</span>
           <input
             type="checkbox"
@@ -124,10 +133,10 @@
 
       <div class="button-row">
         <button id="exportObjBtn">Export OBJ</button>
-        <button id="exportGlbBtn">Export GLB</button>
+        <button id="exportGlbBtn">Export Textured GLB</button>
       </div>
 
-      <div id="status">Status: waiting for OBJ file</div>
+      <div id="status">Status: waiting for OBJ and optional texture</div>
     </div>
 
     <div id="viewer"></div>
